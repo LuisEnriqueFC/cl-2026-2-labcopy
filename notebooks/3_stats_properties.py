@@ -52,11 +52,6 @@
 # * $O$ simbolo inicial o nodo raíz.
 # * $R$ reglas de la forma $X \longrightarrow \gamma$ donde $X$ es no terminal y $\gamma$ es una secuencia de terminales y no terminales
 
-import os
-import nltk
-import pandas as pd
-import numpy as np
-
 plain_grammar = """
 S -> NP VP
 NP -> Det N | Det N PP | 'I'
@@ -69,6 +64,8 @@ P -> 'in'
 """
 
 # +
+import nltk
+
 grammar = nltk.CFG.fromstring(plain_grammar)
 # Cambiar analizador y trace
 analyzer = nltk.ChartParser(grammar)
@@ -127,9 +124,9 @@ for sent in sentences:
 import spacy
 from spacy import displacy
 
-# !python -m spacy download es_core_news_lg
+# !python -m spacy download es_core_news_sm
 
-nlp = spacy.load("es_core_news_lg")
+nlp = spacy.load("es_core_news_sm")
 
 doc = nlp("La niña come un suani")
 
@@ -197,7 +194,7 @@ displacy.render(docs, style="ent")
 # Bibliotecas
 from collections import Counter
 import matplotlib.pyplot as plt
-# plt.rcParams['figure.figsize'] = [10, 6]
+plt.rcParams['figure.figsize'] = [10, 6]
 
 mini_corpus = """Humanismo es un concepto polisémico que se aplica tanto al estudio de las letras humanas, los
 estudios clásicos y la filología grecorromana como a una genérica doctrina o actitud vital que
@@ -246,7 +243,7 @@ plot_frequencies(frequencies, log_scale=True)
 
 # ### Ley Zipf
 
-# Utilizaremos un corpus en español, entre más grande mejor.
+# Utilizaremos otro corpus en español, entre más grande mejor (?)
 
 dataset = load_dataset(
     "wikimedia/wikipedia", "20231101.es", split="train", streaming=True
@@ -265,7 +262,6 @@ corpus = dataset.take(10000)
 
 # +
 import re
-
 
 def normalize_corpus(example):
     example["text"] = re.sub(r"[\W]", " ", example["text"])
@@ -293,6 +289,8 @@ words = count_words(corpus)
 
 words.most_common(10)
 
+# +
+import pandas as pd
 
 def counter_to_pandas(counter: Counter) -> pd.DataFrame:
     df = pd.DataFrame.from_dict(counter, orient="index").reset_index()
@@ -301,6 +299,8 @@ def counter_to_pandas(counter: Counter) -> pd.DataFrame:
     df.reset_index(inplace=True, drop=True)
     return df
 
+
+# -
 
 corpus_freqs = counter_to_pandas(words)
 
@@ -334,14 +334,6 @@ plt.show()
 
 # #### Formulación de la Ley de Zipf:
 
-# $f(w_{r})=\frac{c}{r^{\alpha }}$
-#
-# En la escala logarítimica:
-#
-# $log(f(w_{r}))=log(\frac{c}{r^{\alpha }})$
-#
-# $log(f(w_{r}))=log (c)-\alpha log (r)$
-
 # #### ❓ ¿Cómo estimar el parámetro $\alpha$?
 
 # Podemos hacer una regresión lineal minimizando la suma de los errores cuadráticos:
@@ -349,26 +341,54 @@ plt.show()
 # $J_{MSE}=\sum_{r}^{}(log(f(w_{r}))-(log(c)-\alpha log(r)))^{2}$
 
 # +
+import numpy as np
 from scipy.optimize import minimize
 
-ranks = np.array(corpus_freqs.index) + 1
-frecs = np.array(corpus_freqs["count"])
+# Obtenemos los ranks y las frecuencias del corpus
+# # +1 para hacer que los ranks inicien en 1 y no en 0
+ranks = np.array(corpus_freqs.index) + 1  
+frequencies = np.array(corpus_freqs["count"])
 
-# Inicialización
-a0 = 1
+def zipf_minimization_objective(alpha: np.float64,
+                               word_ranks: np.ndarray,
+                               word_frequencies: np.ndarray) -> np.float64:
+    """
+    Calculate the sum of squared errors for Zipf's law fit.
 
-# Función de minimización:
-func = lambda a: sum((np.log(frecs) - (np.log(frecs[0]) - a * np.log(ranks))) ** 2)
+    Parameters
+    ----------
+    alpha : np.float64
+        The exponent parameter to optimize in Zipf's law
+    word_ranks : np.ndarray
+        Array of word ranks (1 = most frequent word)
+    word_frequencies : np.ndarray
+        Array of observed word frequencies
 
-# Apliando minimos cuadrados
-a_hat = minimize(func, a0).x[0]
+    Returns
+    -------
+    np.float64
+        Sum of squared errors between log frequencies and Zipf's law prediction
+    """
+    predicted_log_freq = np.log(word_frequencies[0]) - alpha * np.log(word_ranks)
+    return np.sum((np.log(word_frequencies) - predicted_log_freq) ** 2)
 
-print("alpha:", a_hat, "\nMSE:", func(a_hat))
+# Parámeto alfa inicial
+initial_alpha_guess = 1.0
+
+optimization_result = minimize(
+    zipf_minimization_objective,
+    initial_alpha_guess,
+    args=(ranks, frequencies)
+)
+estimated_alpha = optimization_result.x[0]
+
+mean_squared_error = zipf_minimization_objective(estimated_alpha, ranks, frequencies)
+print(f"Estimated alpha: {estimated_alpha:.4f}\nMean Squared Error: {mean_squared_error:.4f}")
 
 
 # -
 
-def plot_generate_zipf(alpha: np.float64, ranks: np.array, freqs: np.array) -> None:
+def plot_generate_zipf(alpha: np.float64, ranks: np.ndarray, freqs: np.ndarray) -> None:
     plt.plot(
         np.log(ranks),
         np.log(freqs[0]) - alpha * np.log(ranks),
@@ -377,8 +397,8 @@ def plot_generate_zipf(alpha: np.float64, ranks: np.array, freqs: np.array) -> N
     )
 
 
-plot_generate_zipf(a_hat, ranks, frecs)
-plt.plot(np.log(ranks), np.log(frecs), color="b", label="Distribución CREA")
+plot_generate_zipf(estimated_alpha, ranks, frequencies)
+plt.plot(np.log(ranks), np.log(frequencies), color="b", label="Distribución real")
 plt.xlabel("log ranks")
 plt.ylabel("log frecs")
 plt.legend(bbox_to_anchor=(1, 1))
@@ -401,7 +421,14 @@ plt.show()
 
 # #### 📊 Ejercicio: Muestra el plot de tokens vs types
 #
-# **HINT:** Obtener tipos y tokens acumulados
+# - Hazlo para el corpus en español de wikipedia
+# - Elige un corpus de wikipedia en otro idioma. Haz el mismo plot. ¿Qué observas?
+#
+# **HINT:** Obtener suma de tokens acumuladas` (`numpy.cumsum()`)
+
+# +
+# Tu código bonito acá 🔥
+# -
 
 # ## Diversidad lingüística 
 
@@ -411,10 +438,14 @@ plt.show()
 #
 # Podemos [descargar los datos](https://glottolog.org/meta/downloads) de la plataforma gracias a su [licencia libre](https://creativecommons.org/licenses/by/4.0/). Para está práctica utilizarmos los archivo [`languages_and_dialects_geo.csv`](https://cdstar.eva.mpg.de//bitstreams/EAEA0-2198-D710-AA36-0/languages_and_dialects_geo.csv) y [`languoid.csv`](https://cdstar.eva.mpg.de//bitstreams/EAEA0-2198-D710-AA36-0/glottolog_languoid.csv.zip).
 
+# +
+import os
+
 # Se asume que se han descargado los archivo y que se encuentra en la carpeta data/
 DATA_PATH = "data"
 LANG_GEO_FILE = "languages_and_dialects_geo.csv"
 LANGUOID_FILE = "languoid.csv"
+# -
 
 languages = pd.read_csv(os.path.join(DATA_PATH, LANG_GEO_FILE))
 
@@ -422,9 +453,24 @@ languages.head()
 
 languoids = pd.read_csv(os.path.join(DATA_PATH, LANGUOID_FILE))
 
+languoids.head()
+
+# +
+# Mejorar estas coordenadas
+min_lat = 14.5
+max_lat = 32.7
+min_long = -118.4
+max_long = -86.8
+
+mexico_languages = languages[
+    (languages["latitude"] >= min_lat)
+    & (languages["latitude"] <= max_lat)
+    & (languages["longitude"] >= min_long)
+    & (languages["longitude"] <= max_long)
+]
+
 # +
 # Reconstrucción de linajes usando grafos locales (languoid.csv)
-
 languoids_dict = languoids.set_index('id').to_dict('index')
 
 def reconstruir_linaje(glottocode):
@@ -448,6 +494,8 @@ def reconstruir_linaje(glottocode):
         
     return " > ".join(linaje)
 
+
+# +
 # Aplicamos la función a nuestras lenguas de México
 mexico_languages = mexico_languages.copy()
 mexico_languages['tree'] = mexico_languages['glottocode'].apply(reconstruir_linaje)
@@ -465,7 +513,6 @@ p = df[df["name"] == "Huichol"]
 p["tree"]["huic1243"]
 
 # +
-# Cálculo de similitud genealógica y Heatmap
 import plotly.graph_objects as go
 
 def longest_common_prefix(str1, str2):
